@@ -1,0 +1,434 @@
+//___________________________libraries ________________________________
+#include <SPI.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <MFRC522.h>
+#include <Servo.h>
+#include <ArduinoJson.h>
+#include <LiquidCrystal.h>
+#include <ToneESP32.h>
+//______________________ user defined variables _________________________
+#define SS_PIN1 15  // Reader 1 SS pin (SDA)
+#define RST_PIN1 3 // Reader 1 RST pin
+#define SS_PIN2 5  // Reader 2 SS pin (SDA)
+#define RST_PIN2 16 // Reader 2 RST pin
+//#define LED_PIN 2
+#define LED_BLUE 2
+#define LED_RED 22
+#define BUZZER 12
+#define LED_GREEN 4
+
+
+//________________________ instances _____________________________
+//ToneESP32 tone(BUZZER,0);
+Servo myservo;
+//Servo servo;
+MFRC522 mfrc522_1(SS_PIN1, RST_PIN1); // Create MFRC522 instance for reader 1
+MFRC522 mfrc522_2(SS_PIN2, RST_PIN2); // Create MFRC522 instance for reader 2
+
+
+byte block;
+byte len;
+MFRC522::StatusCode status;
+  
+String uid = "";
+String cardData = "";
+char mac_address[18];
+//___________________  lcd _____________--
+const int rs = 33, en = 32, d4 = 14, d5 = 27, d6 = 26, d7 = 25;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+//______________________ global variable ___________________________-
+//String uid = "";
+String reader = "";
+const char* door_card_id = "732e63a7";
+String item = "item";
+String user = "user";
+String jsonPayload="";
+
+const char* ssid = "No wifi";
+const char* password = "";
+//const char* serverUrl = "http://192.168.43.101:3000/uid_check"; // Modify with your server URL
+const char* serverUrl = "http://192.168.43.120:5000/"; // Modify with your server URL
+// ___________________________ LCD ____________________________________
+
+void display_to_lcd (String message) {
+  // Clear the screen before writing
+  Serial.println("in lcd:     "+message);
+  lcd.clear();
+  delay(200);
+  // Define the maximum number of characters per line
+  int maxChars = 16;
+  
+  // Write the message to the first line
+  lcd.setCursor(0, 0);
+  delay(200);
+  lcd.print(message.substring(0, maxChars));
+  
+  // If the message is longer than the maximum number of characters per line,
+  // wrap the remaining text to the second line
+  if (message.length() > maxChars) {
+    lcd.setCursor(0, 1);
+    lcd.print(message.substring(maxChars));
+  }
+  delay(1000);
+  
+}
+
+
+//____________________________setup ___________________________
+//_____________________________________________________________
+void setup() {
+//  ______________ pins ______________
+pinMode(BUZZER, OUTPUT);
+pinMode(LED_GREEN, OUTPUT);
+pinMode(LED_BLUE, OUTPUT);
+pinMode(LED_RED, OUTPUT);
+//  ______________ servo ______________
+  myservo.attach(13); // attach servo to pin 13
+  myservo.write(0);
+lcd.begin(16, 2);
+//__________________ mac address ____________________
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  
+  sprintf(mac_address, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.printf("MAC address: %s\n", mac_address);
+//  ______________ spi and serial communiation ________________-
+  Serial.begin(115200);
+  SPI.begin();        // Initialize SPI bus
+  mfrc522_1.PCD_Init(); // Initialize MFRC522 reader 1
+  mfrc522_2.PCD_Init(); // Initialize MFRC522 reader 2
+//  Serial.println("Ready to read RFID tags from both readers!");
+  
+  delay(200);
+// ________________________wifi ______________________________
+  WiFi.begin("Aminadab", "aman123456");
+  display_to_lcd("Connecting to WiFi...");
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+    
+  }
+  display_to_lcd("WiFi connected");
+  display_to_lcd("Ready to read RFID tag");
+ delay(1000);
+//   wap_ip = WiFi.localIP();
+  Serial.println("WiFi connected");
+//  Serial.println("IP address: ");
+//  Serial.println(wap_ip);
+//  display_to_lcd("Connected to " + wap_ip);
+}
+
+//_____________ functions ______________________
+
+
+
+//_____________________________________servo ________________________
+void Open_Door(){
+    display_to_lcd("access granted");
+    delay(1000);
+    display_to_lcd("door is opning ...");
+    myservo.write(90); // rotate servo to 90 degrees
+    delay(5000); // wait for 1 second
+     
+    display_to_lcd("door is cloing ...");
+    myservo.write(0); // return servo to starting position
+//      Alarm();
+  
+}
+//_____________________________________servo CLOSE________________________
+void Close_Door(){
+  Serial.println("security alert door closed");
+  display_to_lcd("checking please wait");
+  myservo.write(0); // rotate servo to 90 degrees
+  
+}
+
+
+//_______________________- first rfid ______________________
+void Reader_1(){
+   MFRC522::MIFARE_Key key;
+  for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
+
+  //some variables we need
+  byte block;
+  byte len;
+  MFRC522::StatusCode status;
+
+  
+  mfrc522_1.PICC_DumpDetailsToSerial(&(mfrc522_1.uid)); //dump some details about the card
+
+  uid = "";
+  for (byte i = 0; i < mfrc522_1.uid.size; i++) {
+    uid.concat(String(mfrc522_1.uid.uidByte[i] < 0x10 ? "0" : ""));
+    uid.concat(String(mfrc522_1.uid.uidByte[i], HEX));
+  }
+  
+  cardData = "";
+  block = 4;
+  len = 18;
+
+  status = mfrc522_1.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 4, &key, &(mfrc522_1.uid));
+  if (status != MFRC522::STATUS_OK) {
+    Serial.print(F("Authentication failed: "));
+    Serial.println(mfrc522_1.GetStatusCodeName(status));
+    return;
+  }
+  byte buffer1[18];
+  status = mfrc522_1.MIFARE_Read(block, buffer1, &len);
+  if (status != MFRC522::STATUS_OK) {
+    Serial.print(F("Reading failed: "));
+    Serial.println(mfrc522_1.GetStatusCodeName(status));
+    return;
+  }
+
+for (uint8_t i = 0; i < 16; i++) {
+    if (buffer1[i] != 32) {
+      cardData += (char)buffer1[i];
+    }
+  }
+  cardData.trim();
+  Serial.print(F("UID: "));
+  Serial.println(uid);
+  Serial.print(F("Card Data: "));
+  Serial.println(cardData);
+  if(cardData == "user"){
+    Serial.println("you can send me");
+  }
+  
+    // Read card data from reader 1
+    Serial.print("Reader 1: UID tag :");
+//    uid = "";
+//    for (byte i = 0; i < mfrc522_1.uid.size; i++) {
+//      Serial.print(mfrc522_1.uid.uidByte[i], HEX);
+//      uid.concat(String(mfrc522_1.uid.uidByte[i], HEX));
+//    }
+    Serial.println("");
+    display_to_lcd("Scanning...");
+      reader = "Door";
+//      Serial.println(uid);
+//      Serial.println(reader);
+ digitalWrite(LED_BLUE,HIGH);
+  delay(1000);
+  digitalWrite(LED_BLUE,LOW);
+    
+  delay(500);
+    mfrc522_1.PICC_HaltA(); // Halt PICC
+    mfrc522_1.PCD_StopCrypto1(); // Stop encryption on PC
+  
+}
+
+//_______________________second rfid ______________________
+void Reader_2(){
+   // Look for new cards on reader 2
+  MFRC522::MIFARE_Key key;
+  for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
+
+  //some variables we need
+  byte block;
+  byte len;
+  MFRC522::StatusCode status;
+
+  
+  mfrc522_2.PICC_DumpDetailsToSerial(&(mfrc522_2.uid)); //dump some details about the card
+
+  uid = "";
+  for (byte i = 0; i < mfrc522_2.uid.size; i++) {
+    uid.concat(String(mfrc522_2.uid.uidByte[i] < 0x10 ? "0" : ""));
+    uid.concat(String(mfrc522_2.uid.uidByte[i], HEX));
+  }
+  
+  cardData = "";
+  block = 4;
+  len = 18;
+
+  status = mfrc522_2.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 4, &key, &(mfrc522_2.uid));
+  if (status != MFRC522::STATUS_OK) {
+    Serial.print(F("Authentication failed: "));
+    Serial.println(mfrc522_2.GetStatusCodeName(status));
+    return;
+  }
+  byte buffer1[18];
+  status = mfrc522_2.MIFARE_Read(block, buffer1, &len);
+  if (status != MFRC522::STATUS_OK) {
+    Serial.print(F("Reading failed: "));
+    Serial.println(mfrc522_2.GetStatusCodeName(status));
+    return;
+  }
+
+for (uint8_t i = 0; i < 16; i++) {
+    if (buffer1[i] != 32) {
+      cardData += (char)buffer1[i];
+    }
+  }
+  cardData.trim();
+  Serial.print(F("UID: "));
+  Serial.println(uid);
+  Serial.print(F("Card Data: "));
+  Serial.println(cardData);
+
+  
+    Serial.print("Reader 2: UID tag :");
+    
+    Serial.println("");
+    display_to_lcd("Scanning...");
+      reader = "Store";
+//      Serial.println(uid);
+//      Serial.println(reader);
+ digitalWrite(LED_BLUE,HIGH);
+  delay(1000);
+  digitalWrite(LED_BLUE,LOW);
+ 
+    
+  delay(500);
+    mfrc522_2.PICC_HaltA(); // Halt PICC
+    mfrc522_2.PCD_StopCrypto1(); // Stop encryption on PC
+  
+  
+}
+//______________________-- Alarm ________________________
+void Alarm(){
+   for (int i = 200; i <= 1600; i += 100) {
+    ledcWriteTone(0, i);
+    delay(30);
+  }
+  for (int i = 1600; i >= 200; i -= 100) {
+    ledcWriteTone(0, i);
+    delay(30);
+  }
+  delay(1000); // wait for 1 second before playing the next siren
+}
+
+
+
+
+
+//_______________________ server connection and post request ______________________
+void server(){
+//  if wifi is connected this function try to connect with server and send post request, then get status code as response
+  HTTPClient http;
+      http.begin(serverUrl);
+      http.addHeader("Content-Type", "application/json");
+
+      // Construct the JSON payload to send uid to server
+      if(cardData =="user"){
+      
+      jsonPayload = "{\"uid\":\"" + uid + "\",\"card_type\":\""+user+"\", \"place\":\""+reader+"\",\"mac\":\""+ mac_address +"\"}"; // Modify with your additional data
+      }
+      else{
+      jsonPayload = "{\"uid\":\"" + uid + "\",\"card_type\":\""+item+"\", \"place\":\""+reader+"\",\"mac\":\""+ mac_address +"\"}"; // Modify with your additional data
+      }
+      // get response from server whether allowed or not 
+      //display_to_lcd("checking please wait");
+      int httpResponseCode = http.POST(jsonPayload);
+      Serial.print("posted");
+
+      if (httpResponseCode > 0) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+
+        
+        if (httpResponseCode == 201) {
+          Serial.println("Data successfully sent to the server.");
+       
+        //_______________________ Parse the JSON response_______________________________
+    String jsonResponse = http.getString();
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, jsonResponse);
+    if (error) {
+      Serial.println("Error parsing JSON response");
+    } else {
+      String condition = doc["condition"];
+      String message = doc["message"];
+      Serial.print("Response variable 1: ");
+      Serial.println(condition);
+      Serial.print("Response variable 2: ");
+      Serial.println(message);
+
+//      __________________ conditons based up on response  ____________________________
+      if(condition == "unauthorized"){
+      
+      digitalWrite(LED_RED,HIGH);
+      delay(6000);
+      digitalWrite(LED_RED,LOW);
+      Alarm();
+//      digitalWrite(BUZZER,LOW);
+      display_to_lcd(message);
+      Close_Door();
+        
+    }else if(condition == "authorized"){
+      digitalWrite(LED_GREEN,HIGH);
+      delay(6000);
+      digitalWrite(LED_GREEN,LOW);
+      display_to_lcd(message);
+      Open_Door();
+      
+    }
+    else if(condition == "miss_order"){
+      digitalWrite(LED_RED,HIGH);
+      delay(6000);
+      digitalWrite(LED_RED,LOW);
+    }
+    else{
+      display_to_lcd(message);
+    }
+
+
+    
+    }
+
+    
+      }
+      else {
+        Serial.print("Error on sending POST: ");
+        display_to_lcd("Error on sending POST: ");
+        Serial.println(httpResponseCode);
+      }
+
+      http.end();
+}
+}
+
+
+
+void loop() {
+
+  // Look for new cards on reader 1
+//  display_to_lcd("well come           ready to scan");
+  if (mfrc522_1.PICC_IsNewCardPresent() && mfrc522_1.PICC_ReadCardSerial()) {
+    Serial.println(F("**Card Detected @1:**"));
+      Reader_1();
+      if(uid == door_card_id){
+         Open_Door();
+      }
+       else if (WiFi.status() == WL_CONNECTED) {
+      server();
+      }
+      else {
+        Serial.println("Error in WiFi connection");
+      }
+      delay(2000);  // Wait for 2 seconds before reading the next card
+  }
+
+
+  
+  // Look for new cards on reader 2
+  if (mfrc522_2.PICC_IsNewCardPresent() && mfrc522_2.PICC_ReadCardSerial()) {
+    // Look for new cards on reader 2
+    Serial.println(F("**Card Detected @ 2:**"));
+    Reader_2();
+    if (WiFi.status() == WL_CONNECTED) {
+      server();
+      }
+      else {
+        Serial.println("Error in WiFi connection");
+      }
+      delay(2000);  // Wait for 2 seconds before reading the next card
+    
+  }
+
+ 
+
+  delay(1000);
+}
